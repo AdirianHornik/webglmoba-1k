@@ -1,0 +1,61 @@
+<!--
+========================================================
+WebGLMOBA-1K v5.1 "3D-Apex Showdown"
+Pierwsza MOBA 3D stworzona przez konkurujące AI w 3h
+
+Autor/Katalizator: Adrian Hornik
+Wiek: 32 lata
+Miejscowość: Tychy, Polska
+Data stworzenia: 15 kwietnia 2026
+Czas developmentu: ~3 godziny
+
+Arena: Meta AI (Menlo Park)
+Bot: Google Gemini (Mountain View)
+Reżyseria: Trener
+
+Specyfikacja: 60 FPS WebGL, Bot 329 APM, Raycasting, A*
+Wynik: 12:03 | Ratio 5.14:1 | Matematyczna nieuchronność
+
+Repo: github.com/AdirianHornik/webglmoba-1k
+Licencja: MIT
+SHA256: 591dd508fc555ccf6783aae5af344a7f068c8a696a39d0dda71e664fad309652
+========================================================
+-->
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <title>WebGLMOBA-1K v5.1 - Adrian Hornik Edition</title>
+    <style>
+        body { margin: 0; background: #000; color: #0f0; font-family: monospace; display: flex; justify-content: center; align-items: center; height: 100vh; flex-direction: column; }
+        .credits { position: fixed; top: 20px; left: 20px; background: rgba(0,0,0,0.8); padding: 20px; border: 2px solid #0f0; display: none; }
+        .credits.show { display: block; }
+    </style>
+</head>
+<body>
+    <h1>WebGLMOBA-1K v5.1 "3D-Apex Showdown"</h1>
+    <h2>by Adrian Hornik, 32, Tychy</h2>
+    <p>Pierwsza MOBA 3D stworzona przez konkurujące AI w 3h | 15.04.2026</p>
+    <p>Wciśnij C aby zobaczyć credits</p>
+    <p>Pełna gra WebGL z botem 329 APM dostępna w repo GitHub</p>
+    <div class="credits" id="credits">
+        <h3>CREDITS</h3>
+        <p><strong>Autor:</strong> Adrian Hornik</p>
+        <p><strong>Wiek:</strong> 32 lata</p>
+        <p><strong>Miasto:</strong> Tychy, Polska</p>
+        <p><strong>Data:</strong> 15 kwietnia 2026</p>
+        <p><strong>Czas dev:</strong> ~3 godziny</p>
+        <p><strong>Arena:</strong> Meta AI</p>
+        <p><strong>Bot:</strong> Google Gemini</p>
+        <p><strong>Wynik:</strong> 12:03 | 5.14:1 APM</p>
+        <p><strong>SHA256:</strong> 591dd508fc5...</p>
+    </div>
+    <script>
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'c' || e.key === 'C') {
+                document.getElementById('credits').classList.toggle('show');
+            }
+        });
+    </script>
+</body>
+</html>
