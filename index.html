@@ -1,61 +1,1667 @@
-<!--
-========================================================
-WebGLMOBA-1K v5.1 "3D-Apex Showdown"
-Pierwsza MOBA 3D stworzona przez konkurujące AI w 3h
-
-Autor/Katalizator: Adrian Hornik
-Wiek: 32 lata
-Miejscowość: Tychy, Polska
-Data stworzenia: 15 kwietnia 2026
-Czas developmentu: ~3 godziny
-
-Arena: Meta AI (Menlo Park)
-Bot: Google Gemini (Mountain View)
-Reżyseria: Trener
-
-Specyfikacja: 60 FPS WebGL, Bot 329 APM, Raycasting, A*
-Wynik: 12:03 | Ratio 5.14:1 | Matematyczna nieuchronność
-
-Repo: github.com/AdirianHornik/webglmoba-1k
-Licencja: MIT
-SHA256: 591dd508fc555ccf6783aae5af344a7f068c8a696a39d0dda71e664fad309652
-========================================================
--->
-<!DOCTYPE html>
-<html lang="pl">
+<html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <title>WebGLMOBA-1K v5.1 - Adrian Hornik Edition</title>
-    <style>
-        body { margin: 0; background: #000; color: #0f0; font-family: monospace; display: flex; justify-content: center; align-items: center; height: 100vh; flex-direction: column; }
-        .credits { position: fixed; top: 20px; left: 20px; background: rgba(0,0,0,0.8); padding: 20px; border: 2px solid #0f0; display: none; }
-        .credits.show { display: block; }
-    </style>
+<!-- Playables SDK -->
+<script>// Playables SDK v1.0.0
+// Game lifecycle bridge: rAF-based game-ready detection + event communication
+(function() {
+  'use strict';
+
+  // Idempotency: skip if already initialized (e.g., server-side injection
+  // followed by client-side inject-javascript via the Bloks webview component).
+  if (window.playablesSDK) return;
+
+  var HANDLER_NAME = 'playablesGameEventHandler';
+  var ANDROID_BRIDGE_NAME = '_MetaPlayablesBridge';
+  var RAF_FRAME_THRESHOLD = 3;
+
+  var gameReadySent = false;
+  var firstInteractionSent = false;
+  var errorSent = false;
+  var frameCount = 0;
+  var originalRAF = window.requestAnimationFrame;
+
+  // --- Transport Layer ---
+
+  function hasIOSBridge() {
+    return !!(window.webkit &&
+              window.webkit.messageHandlers &&
+              window.webkit.messageHandlers[HANDLER_NAME]);
+  }
+
+  function hasAndroidBridge() {
+    return !!(window[ANDROID_BRIDGE_NAME] &&
+              typeof window[ANDROID_BRIDGE_NAME].postEvent === 'function');
+  }
+
+  function isInIframe() {
+    return !!(window.parent && window.parent !== window);
+  }
+
+  function sendEvent(eventName, payload) {
+    var message = {
+      type: eventName,
+      payload: payload || {},
+      timestamp: Date.now()
+    };
+
+    if (hasIOSBridge()) {
+      try {
+        window.webkit.messageHandlers[HANDLER_NAME].postMessage(message);
+      } catch (e) { /* ignore */ }
+      return;
+    }
+
+    if (hasAndroidBridge()) {
+    try {
+      var p = payload || {};
+      p.__secureToken = window.__fbAndroidBridgeAuthToken || '';
+      window[ANDROID_BRIDGE_NAME].postEvent(
+        eventName,
+        JSON.stringify(p)
+      );
+    } catch (e) { /* ignore */ }
+    return;
+  }
+
+    if (isInIframe()) {
+      try {
+        window.parent.postMessage(message, '*');
+      } catch (e) { /* ignore */ }
+      return;
+    }
+  }
+
+  // --- rAF Game-Ready Detection ---
+
+  function onFrame() {
+    if (gameReadySent) return;
+
+    frameCount++;
+    if (frameCount >= RAF_FRAME_THRESHOLD) {
+      gameReadySent = true;
+      sendEvent('game_ready', {
+        frame_count: frameCount,
+        detected_at: Date.now()
+      });
+      return;
+    }
+
+    originalRAF.call(window, onFrame);
+  }
+
+  if (originalRAF) {
+    window.requestAnimationFrame = function(callback) {
+      if (!gameReadySent) {
+        return originalRAF.call(window, function(timestamp) {
+          frameCount++;
+          if (frameCount >= RAF_FRAME_THRESHOLD && !gameReadySent) {
+            gameReadySent = true;
+            sendEvent('game_ready', {
+              frame_count: frameCount,
+              detected_at: Date.now()
+            });
+          }
+          callback(timestamp);
+        });
+      }
+      return originalRAF.call(window, callback);
+    };
+  }
+
+  // --- First User Interaction Detection ---
+
+  function setupFirstInteractionDetection() {
+    var events = ['touchstart', 'mousedown', 'keydown'];
+
+    function onFirstInteraction() {
+      if (firstInteractionSent) return;
+      firstInteractionSent = true;
+      sendEvent('user_interaction_start', null);
+
+      for (var i = 0; i < events.length; i++) {
+        document.removeEventListener(events[i], onFirstInteraction, true);
+      }
+    }
+
+    for (var i = 0; i < events.length; i++) {
+      document.addEventListener(events[i], onFirstInteraction, true);
+    }
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', setupFirstInteractionDetection);
+  } else {
+    setupFirstInteractionDetection();
+  }
+
+  // --- Auto Error Capture ---
+
+  window.addEventListener('error', function(event) {
+    if (errorSent) return;
+    errorSent = true;
+    sendEvent('error', {
+      message: event.message || 'Unknown error',
+      source: event.filename || '',
+      lineno: event.lineno || 0,
+      colno: event.colno || 0,
+      auto_captured: true
+    });
+  });
+
+  window.addEventListener('unhandledrejection', function(event) {
+    if (errorSent) return;
+    errorSent = true;
+    var reason = event.reason;
+    sendEvent('error', {
+      message: (reason instanceof Error) ? reason.message : String(reason),
+      type: 'unhandled_promise_rejection',
+      auto_captured: true
+    });
+  });
+
+  // --- Public API ---
+
+  window.playablesSDK = {
+    complete: function(score) {
+      sendEvent('game_ended', {
+        score: score,
+        completed: true
+      });
+    },
+
+    error: function(message) {
+      if (errorSent) return;
+      errorSent = true;
+      sendEvent('error', {
+        message: message || 'Unknown error',
+        auto_captured: false
+      });
+    },
+
+    sendEvent: function(eventName, payload) {
+      if (!eventName || typeof eventName !== 'string') return;
+      sendEvent(eventName, payload);
+    }
+  };
+
+  // Kick off rAF detection in case no game code calls rAF immediately
+  if (originalRAF) {
+    originalRAF.call(window, onFrame);
+  }
+})();</script>
+<script>window.Intl=window.Intl||{};Intl.t=function(s){return(Intl._locale&&Intl._locale[s])||s;};</script>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WebGLMOBA-1K v5.1 "3D-Apex Showdown"</title>
+  <script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+    
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      overflow: hidden;
+      background: #0a0e1a;
+      color: #fff;
+    }
+    
+    #gameContainer {
+      position: relative;
+      width: 100vw;
+      height: 100vh;
+    }
+    
+    canvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+    
+    .hud-panel {
+      background: linear-gradient(135deg, rgba(15, 23, 42, 0.95) 0%, rgba(30, 41, 59, 0.95) 100%);
+      backdrop-filter: blur(12px);
+      border: 1px solid rgba(148, 163, 184, 0.2);
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+    }
+    
+    .skill-slot {
+      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+      background: linear-gradient(135deg, #1e293b 0%, #334155 100%);
+      border: 2px solid rgba(148, 163, 184, 0.3);
+    }
+    
+    .skill-slot:hover {
+      transform: translateY(-2px);
+      border-color: rgba(59, 130, 246, 0.8);
+      box-shadow: 0 4px 20px rgba(59, 130, 246, 0.4);
+    }
+    
+    .skill-slot.on-cooldown {
+      filter: grayscale(0.7) brightness(0.5);
+      cursor: not-allowed;
+    }
+    
+    .skill-slot.on-cooldown:hover {
+      transform: none;
+      border-color: rgba(148, 163, 184, 0.3);
+      box-shadow: none;
+    }
+    
+    .cooldown-overlay {
+      background: conic-gradient(from 0deg, transparent 0%, rgba(0, 0, 0, 0.85) 0%);
+      transition: background 0.1s linear;
+    }
+    
+    .health-bar {
+      background: linear-gradient(90deg, #dc2626 0%, #ef4444 50%, #dc2626 100%);
+      box-shadow: 0 0 12px rgba(239, 68, 68, 0.6), inset 0 1px 2px rgba(255, 255, 255, 0.2);
+      transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    
+    .mana-bar {
+      background: linear-gradient(90deg, #2563eb 0%, #3b82f6 50%, #2563eb 100%);
+      box-shadow: 0 0 12px rgba(59, 130, 246, 0.6), inset 0 1px 2px rgba(255, 255, 255, 0.2);
+      transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    
+    .xp-bar {
+      background: linear-gradient(90deg, #eab308 0%, #facc15 50%, #eab308 100%);
+      box-shadow: 0 0 12px rgba(250, 204, 21, 0.6), inset 0 1px 2px rgba(255, 255, 255, 0.2);
+      transition: width 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    
+    .minimap {
+      background: linear-gradient(135deg, rgba(15, 23, 42, 0.95) 0%, rgba(30, 41, 59, 0.95) 100%);
+      backdrop-filter: blur(12px);
+      border: 2px solid rgba(148, 163, 184, 0.3);
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.6), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+    }
+    
+    .score-popup {
+      animation: scoreFloat 1.5s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+      text-shadow: 0 2px 8px rgba(0, 0, 0, 0.8);
+      font-weight: 800;
+    }
+    
+    @keyframes scoreFloat {
+      0% { opacity: 1; transform: translateY(0) scale(0.5); }
+      20% { transform: translateY(-20px) scale(1.2); }
+      100% { opacity: 0; transform: translateY(-80px) scale(0.8); }
+    }
+    
+    .damage-number {
+      animation: damageFloat 1s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+      text-shadow: 0 2px 8px rgba(0, 0, 0, 0.8), 0 0 16px currentColor;
+      font-weight: 800;
+    }
+    
+    @keyframes damageFloat {
+      0% { opacity: 1; transform: translateY(0) scale(0.5); }
+      15% { transform: translateY(-15px) scale(1.3); }
+      100% { opacity: 0; transform: translateY(-60px) scale(0.7); }
+    }
+    
+    .ping-effect {
+      animation: ping 0.6s cubic-bezier(0, 0, 0.2, 1);
+    }
+    
+    @keyframes ping {
+      0% { transform: scale(0.2); opacity: 1; }
+      75%, 100% { transform: scale(2.5); opacity: 0; }
+    }
+    
+    .stats-item {
+      background: linear-gradient(135deg, rgba(30, 41, 59, 0.8) 0%, rgba(51, 65, 85, 0.8) 100%);
+      border: 1px solid rgba(148, 163, 184, 0.2);
+      transition: all 0.2s;
+    }
+    
+    .stats-item:hover {
+      background: linear-gradient(135deg, rgba(51, 65, 85, 0.9) 0%, rgba(71, 85, 105, 0.9) 100%);
+      border-color: rgba(59, 130, 246, 0.5);
+    }
+    
+    .tooltip {
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.2s;
+      background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+      border: 1px solid rgba(59, 130, 246, 0.5);
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.8);
+    }
+    
+    .skill-slot:hover .tooltip {
+      opacity: 1;
+    }
+    
+    .credits-overlay {
+      background: linear-gradient(135deg, rgba(15, 23, 42, 0.98) 0%, rgba(30, 41, 59, 0.98) 100%);
+      backdrop-filter: blur(16px);
+      border: 2px solid rgba(59, 130, 246, 0.5);
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.9), inset 0 1px 0 rgba(255, 255, 255, 0.1);
+      animation: fadeIn 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    
+    @keyframes fadeIn {
+      from { opacity: 0; transform: scale(0.95) translate(-50%, -50%); }
+      to { opacity: 1; transform: scale(1) translate(-50%, -50%); }
+    }
+    
+    .credits-glow {
+      animation: glow 2s ease-in-out infinite alternate;
+    }
+    
+    @keyframes glow {
+      from { text-shadow: 0 0 10px rgba(59, 130, 246, 0.5), 0 0 20px rgba(59, 130, 246, 0.3); }
+      to { text-shadow: 0 0 20px rgba(59, 130, 246, 0.8), 0 0 30px rgba(59, 130, 246, 0.5); }
+    }
+    
+    @media (max-width: 768px) {
+      .hud-panel { font-size: 0.75rem; }
+      .minimap { width: 120px !important; height: 120px !important; }
+      .skill-slot { width: 48px !important; height: 48px !important; }
+    }
+  </style>
 </head>
 <body>
-    <h1>WebGLMOBA-1K v5.1 "3D-Apex Showdown"</h1>
-    <h2>by Adrian Hornik, 32, Tychy</h2>
-    <p>Pierwsza MOBA 3D stworzona przez konkurujące AI w 3h | 15.04.2026</p>
-    <p>Wciśnij C aby zobaczyć credits</p>
-    <p>Pełna gra WebGL z botem 329 APM dostępna w repo GitHub</p>
-    <div class="credits" id="credits">
-        <h3>CREDITS</h3>
-        <p><strong>Autor:</strong> Adrian Hornik</p>
-        <p><strong>Wiek:</strong> 32 lata</p>
-        <p><strong>Miasto:</strong> Tychy, Polska</p>
-        <p><strong>Data:</strong> 15 kwietnia 2026</p>
-        <p><strong>Czas dev:</strong> ~3 godziny</p>
-        <p><strong>Arena:</strong> Meta AI</p>
-        <p><strong>Bot:</strong> Google Gemini</p>
-        <p><strong>Wynik:</strong> 12:03 | 5.14:1 APM</p>
-        <p><strong>SHA256:</strong> 591dd508fc5...</p>
+  <div id="gameContainer">
+    <canvas id="gameCanvas"></canvas>
+    
+    <!-- Top HUD -->
+    <div class="absolute top-0 left-0 right-0 p-4 flex justify-between items-start pointer-events-none">
+      <!-- Left: Player Stats -->
+      <div class="hud-panel rounded-xl p-4 pointer-events-auto w-80">
+        <div class="flex items-center gap-3 mb-3">
+          <div class="w-12 h-12 rounded-full bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center text-xl font-bold shadow-lg">P1</div>
+          <div class="flex-1">
+            <div class="text-sm font-bold text-blue-300">Blue Nexus Commander</div>
+            <div class="text-xs text-slate-400">Level <span id="playerLevel">1</span></div>
+          </div>
+          <div class="text-right">
+            <div class="text-xs text-slate-400">Score</div>
+            <div class="text-xl font-bold text-yellow-400" id="playerScore">0</div>
+          </div>
+        </div>
+        <div class="space-y-2">
+          <div class="relative h-6 bg-slate-900 rounded-full overflow-hidden border border-slate-700">
+            <div class="health-bar absolute inset-y-0 left-0 rounded-full" id="playerHealthBar" style="width: 100%"></div>
+            <div class="absolute inset-0 flex items-center justify-center text-xs font-bold text-white drop-shadow-lg">
+              <span id="playerHealthText">1000/1000</span>
+            </div>
+          </div>
+          <div class="relative h-5 bg-slate-900 rounded-full overflow-hidden border border-slate-700">
+            <div class="mana-bar absolute inset-y-0 left-0 rounded-full" id="playerManaBar" style="width: 100%"></div>
+            <div class="absolute inset-0 flex items-center justify-center text-xs font-bold text-white drop-shadow-lg">
+              <span id="playerManaText">800/800</span>
+            </div>
+          </div>
+          <div class="relative h-3 bg-slate-900 rounded-full overflow-hidden border border-slate-700">
+            <div class="xp-bar absolute inset-y-0 left-0 rounded-full" id="playerXPBar" style="width: 0%"></div>
+          </div>
+        </div>
+      </div>
+      
+      <!-- Center: Timer & Status -->
+      <div class="hud-panel rounded-xl px-6 py-3 pointer-events-auto">
+        <div class="text-center">
+          <div class="text-xs text-slate-400 mb-1">MATCH TIME</div>
+          <div class="text-3xl font-bold font-mono tracking-wider" id="matchTimer">12:03</div>
+          <div class="text-xs text-green-400 mt-1 flex items-center justify-center gap-1">
+            <span class="w-2 h-2 bg-green-400 rounded-full animate-pulse"></span>
+            60 FPS
+          </div>
+        </div>
+      </div>
+      
+      <!-- Right: Enemy Stats -->
+      <div class="hud-panel rounded-xl p-4 pointer-events-auto w-80">
+        <div class="flex items-center gap-3 mb-3">
+          <div class="text-left">
+            <div class="text-xs text-slate-400">Score</div>
+            <div class="text-xl font-bold text-yellow-400" id="botScore">0</div>
+          </div>
+          <div class="flex-1 text-right">
+            <div class="text-sm font-bold text-red-300">Red Nexus Destroyer</div>
+            <div class="text-xs text-slate-400">Level <span id="botLevel">1</span> | 329 APM</div>
+          </div>
+          <div class="w-12 h-12 rounded-full bg-gradient-to-br from-red-500 to-red-700 flex items-center justify-center text-xl font-bold shadow-lg">BOT</div>
+        </div>
+        <div class="space-y-2">
+          <div class="relative h-6 bg-slate-900 rounded-full overflow-hidden border border-slate-700">
+            <div class="health-bar absolute inset-y-0 left-0 rounded-full" id="botHealthBar" style="width: 100%"></div>
+            <div class="absolute inset-0 flex items-center justify-center text-xs font-bold text-white drop-shadow-lg">
+              <span id="botHealthText">1000/1000</span>
+            </div>
+          <div class="relative h-5 bg-slate-900 rounded-full overflow-hidden border border-slate-700">
+            <div class="mana-bar absolute inset-y-0 left-0 rounded-full" id="botManaBar" style="width: 100%"></div>
+            <div class="absolute inset-0 flex items-center justify-center text-xs font-bold text-white drop-shadow-lg">
+              <span id="botManaText">800/800</span>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
-    <script>
-        document.addEventListener('keydown', (e) => {
-            if (e.key === 'c' || e.key === 'C') {
-                document.getElementById('credits').classList.toggle('show');
-            }
+    
+    <!-- Minimap -->
+    <div class="absolute top-4 right-4 pointer-events-none">
+      <canvas id="minimap" width="200" height="200" class="minimap rounded-lg pointer-events-auto"></canvas>
+      <div class="hud-panel rounded-lg mt-2 p-2 text-xs pointer-events-auto">
+        <div class="grid grid-cols-2 gap-2">
+          <div class="stats-item rounded px-2 py-1">
+            <div class="text-slate-400">K/D/A</div>
+            <div class="font-bold"><span id="statKills">0</span>/<span id="statDeaths">0</span>/<span id="statAssists">0</span></div>
+          </div>
+          <div class="stats-item rounded px-2 py-1">
+            <div class="text-slate-400">CS</div>
+            <div class="font-bold" id="statCS">0</div>
+          </div>
+          <div class="stats-item rounded px-2 py-1">
+            <div class="text-slate-400">Gold</div>
+            <div class="font-bold text-yellow-400" id="statGold">500</div>
+          </div>
+          <div class="stats-item rounded px-2 py-1">
+            <div class="text-slate-400">Ratio</div>
+            <div class="font-bold text-green-400">5.14:1</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Bottom HUD: Skills -->
+    <div class="absolute bottom-4 left-1/2 transform -translate-x-1/2 pointer-events-none">
+      <div class="hud-panel rounded-2xl p-4 pointer-events-auto">
+        <div class="flex gap-3">
+          <div class="skill-slot relative w-16 h-16 rounded-xl flex items-center justify-center cursor-pointer" data-skill="Q">
+            <div class="absolute inset-0 rounded-xl cooldown-overlay hidden" id="cooldown-Q"></div>
+            <div class="text-2xl">⚡</div>
+            <div class="absolute -bottom-1 -right-1 bg-slate-900 rounded px-1.5 py-0.5 text-xs font-bold border border-slate-600">Q</div>
+            <div class="tooltip absolute bottom-full mb-2 left-1/2 -translate-x-1/2 w-48 p-3 rounded-lg text-xs">
+              <div class="font-bold text-yellow-400 mb-1">Plasma Strike</div>
+              <div class="text-slate-300 mb-2">Deals 120 damage in a line. Pierces enemies.</div>
+              <div class="text-slate-500">Cooldown: 4s | Mana: 60</div>
+            </div>
+          <div class="skill-slot relative w-16 h-16 rounded-xl flex items-center justify-center cursor-pointer" data-skill="W">
+            <div class="absolute inset-0 rounded-xl cooldown-overlay hidden" id="cooldown-W"></div>
+            <div class="text-2xl">🛡️</div>
+            <div class="absolute -bottom-1 -right-1 bg-slate-900 rounded px-1.5 py-0.5 text-xs font-bold border border-slate-600">W</div>
+            <div class="tooltip absolute bottom-full mb-2 left-1/2 -translate-x-1/2 w-48 p-3 rounded-lg text-xs">
+              <div class="font-bold text-blue-400 mb-1">Force Shield</div>
+              <div class="text-slate-300 mb-2">Absorbs 300 damage for 3s. 50% move speed.</div>
+              <div class="text-slate-500">Cooldown: 12s | Mana: 80</div>
+            </div>
+          <div class="skill-slot relative w-16 h-16 rounded-xl flex items-center justify-center cursor-pointer" data-skill="E">
+            <div class="absolute inset-0 rounded-xl cooldown-overlay hidden" id="cooldown-E"></div>
+            <div class="text-2xl">💨</div>
+            <div class="absolute -bottom-1 -right-1 bg-slate-900 rounded px-1.5 py-0.5 text-xs font-bold border border-slate-600">E</div>
+            <div class="tooltip absolute bottom-full mb-2 left-1/2 -translate-x-1/2 w-48 p-3 rounded-lg text-xs">
+              <div class="font-bold text-cyan-400 mb-1">Phase Dash</div>
+              <div class="text-slate-300 mb-2">Dash forward. Deals 80 damage to enemies hit.</div>
+              <div class="text-slate-500">Cooldown: 8s | Mana: 50</div>
+            </div>
+          <div class="skill-slot relative w-16 h-16 rounded-xl flex items-center justify-center cursor-pointer" data-skill="R">
+            <div class="absolute inset-0 rounded-xl cooldown-overlay hidden" id="cooldown-R"></div>
+            <div class="text-2xl">☄️</div>
+            <div class="absolute -bottom-1 -right-1 bg-slate-900 rounded px-1.5 py-0.5 text-xs font-bold border border-slate-600">R</div>
+            <div class="tooltip absolute bottom-full mb-2 left-1/2 -translate-x-1/2 w-48 p-3 rounded-lg text-xs">
+              <div class="font-bold text-orange-400 mb-1">Apex Orbital Strike</div>
+              <div class="text-slate-300 mb-2">Massive AOE. 400 damage + stun 1.5s</div>
+              <div class="text-slate-500">Cooldown: 45s | Mana: 150</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Controls Hint -->
+    <div class="absolute bottom-4 left-4 hud-panel rounded-lg p-3 text-xs pointer-events-none max-w-xs">
+      <div class="font-bold text-slate-300 mb-2">Controls</div>
+      <div class="space-y-1 text-slate-400">
+        <div><span class="text-blue-400 font-mono">RMB</span> Move / Attack</div>
+        <div><span class="text-blue-400 font-mono">Q/W/E/R</span> Cast Skills</div>
+        <div><span class="text-blue-400 font-mono">Mouse Wheel</span> Zoom</div>
+        <div><span class="text-yellow-400 font-mono">C</span> Credits</div>
+      </div>
+    </div>
+    
+    <!-- Credits Overlay -->
+    <div id="creditsOverlay" class="credits-overlay fixed top-1/2 left-1/2 rounded-2xl p-8 max-w-2xl w-[90%] z-50 hidden" style="transform: translate(-50%, -50%)">
+      <div class="text-center">
+        <h1 class="text-4xl font-bold mb-2 credits-glow bg-gradient-to-r from-blue-400 to-cyan-400 bg-clip-text text-transparent">
+          WebGLMOBA-1K v5.1
+        </h1>
+        <div class="text-2xl font-semibold text-slate-300 mb-6">"3D-Apex Showdown"</div>
+        
+        <div class="border-t border-b border-slate-700 py-4 my-4 space-y-2">
+          <div class="text-sm text-slate-400">Author / Katalizator</div>
+          <div class="text-xl font-bold text-white">Adrian Hornik</div>
+          <div class="text-sm text-slate-400">Age 32 • Tychy, Poland</div>
+        </div>
+        
+        <div class="text-sm text-slate-300 mb-4 px-4">
+          First 3D MOBA created by competing AI in 3h.<br>
+          Created with help of two AI simultaneously.
+        </div>
+        
+        <div class="grid grid-cols-2 gap-4 mb-6 text-sm">
+          <div class="bg-slate-900/50 rounded-lg p-3 border border-slate-700">
+            <div class="text-xs text-slate-500 mb-1">Arena</div>
+            <div class="font-bold text-blue-400">Meta AI</div>
+            <div class="text-xs text-slate-500">Menlo Park</div>
+          </div>
+          <div class="bg-slate-900/50 rounded-lg p-3 border border-slate-700">
+            <div class="text-xs text-slate-500 mb-1">Bot</div>
+            <div class="font-bold text-green-400">Google Gemini</div>
+            <div class="text-xs text-slate-500">Mountain View</div>
+          </div>
+        </div>
+        
+        <div class="text-left bg-slate-900/50 rounded-lg p-4 border border-slate-700 mb-4 text-xs space-y-1">
+          <div class="font-bold text-slate-300 mb-2">Technical Specifications:</div>
+          <div class="flex justify-between"><span class="text-slate-400">Engine:</span><span class="text-green-400">60 FPS WebGL</span></div>
+          <div class="flex justify-between"><span class="text-slate-400">Bot APM:</span><span class="text-green-400">329</span></div>
+          <div class="flex justify-between"><span class="text-slate-400">Features:</span><span class="text-slate-300">Raycasting, A*, Z-Awareness</span></div>
+          <div class="flex justify-between"><span class="text-slate-400">Match Result:</span><span class="text-yellow-400">12:03 | 5.14:1</span></div>
+        </div>
+        
+        <div class="text-xs text-slate-500 space-y-1">
+          <div>Date: 15 kwietnia 2026</div>
+          <div>Repo: <a href="https://github.com/adrianhornik/webglmoba-1k" target="_blank" class="text-blue-400 hover:text-blue-300">github.com/adrianhornik/webglmoba-1k</a></div>
+          <div>License: MIT</div>
+        </div>
+        
+        <div class="mt-6 text-xs text-slate-500">
+          Press <span class="text-yellow-400 font-mono font-bold">C</span> to close
+        </div>
+      </div>
+    </div>
+    
+    <!-- Damage Numbers Container -->
+    <div id="damageNumbers" class="absolute inset-0 pointer-events-none"></div>
+  </div>
+
+  <script>
+    // Game State
+    const game = {
+      scene: null,
+      camera: null,
+      renderer: null,
+      raycaster: new THREE.Raycaster(),
+      mouse: new THREE.Vector2(),
+      clock: new THREE.Clock(),
+      terrain: null,
+      player: null,
+      bot: null,
+      minions: [],
+      towers: [],
+      projectiles: [],
+      particles: [],
+      gameTime: 723,
+      running: true,
+      stats: { kills: 0, deaths: 0, assists: 0, cs: 0, gold: 500 },
+      botStats: { kills: 0, deaths: 0, cs: 0, gold: 500 },
+      keys: {},
+      cameraOffset: new THREE.Vector3(0, 15, 10),
+      cameraZoom: 1,
+      showCredits: false
+    };
+    
+    // Skills definition
+    const SKILLS = {
+      Q: { name: 'Plasma Strike', cooldown: 4, mana: 60, damage: 120, range: 10, castTime: 0.2 },
+      W: { name: 'Force Shield', cooldown: 12, mana: 80, damage: 0, duration: 3, castTime: 0 },
+      E: { name: 'Phase Dash', cooldown: 8, mana: 50, damage: 80, range: 8, castTime: 0 },
+      R: { name: 'Apex Orbital', cooldown: 45, mana: 150, damage: 400, range: 12, radius: 5, castTime: 0.5 }
+    };
+    
+    class Entity {
+      constructor(x, y, z, team, type) {
+        this.team = team;
+        this.type = type;
+        this.maxHealth = 1000;
+        this.health = 1000;
+        this.maxMana = 800;
+        this.mana = 800;
+        this.level = 1;
+        this.xp = 0;
+        this.xpToNext = 280;
+        this.attackDamage = 50;
+        this.attackRange = 5;
+        this.attackSpeed = 1.2;
+        this.moveSpeed = 5;
+        this.lastAttack = 0;
+        this.target = null;
+        this.path = [];
+        this.state = 'idle';
+        this.cooldowns = { Q: 0, W: 0, E: 0, R: 0 };
+        this.shield = 0;
+        this.shieldDuration = 0;
+        this.stunned = 0;
+        this.lastDmgTaken = 0;
+        
+        this.mesh = new THREE.Group();
+        this.mesh.position.set(x, y, z);
+        
+        const bodyGeo = new THREE.CylinderGeometry(0.4, 0.5, 1.2, 16);
+        const bodyMat = new THREE.MeshPhongMaterial({ 
+          color: team === 'blue' ? 0x3b82f6 : 0xef4444,
+          emissive: team === 'blue' ? 0x1e40af : 0x991b1b,
+          emissiveIntensity: 0.3,
+          shininess: 100
         });
-    </script>
+        this.body = new THREE.Mesh(bodyGeo, bodyMat);
+        this.body.castShadow = true;
+        this.mesh.add(this.body);
+        
+        const headGeo = new THREE.SphereGeometry(0.3, 16, 16);
+        const headMat = new THREE.MeshPhongMaterial({
+          color: team === 'blue' ? 0x60a5fa : 0xf87171,
+          emissive: team === 'blue' ? 0x3b82f6 : 0xef4444,
+          emissiveIntensity: 0.5
+        });
+        this.head = new THREE.Mesh(headGeo, headMat);
+        this.head.position.y = 0.9;
+        this.head.castShadow = true;
+        this.mesh.add(this.head);
+        
+        const weaponGeo = new THREE.BoxGeometry(0.1, 0.1, 1.5);
+        const weaponMat = new THREE.MeshPhongMaterial({ 
+          color: 0xe5e7eb,
+          emissive: team === 'blue' ? 0x3b82f6 : 0xef4444,
+          emissiveIntensity: 0.8,
+          shininess: 200
+        });
+        this.weapon = new THREE.Mesh(weaponGeo, weaponMat);
+        this.weapon.position.set(0.5, 0.3, 0);
+        this.mesh.add(this.weapon);
+        
+        this.selectionRing = new THREE.Mesh(
+          new THREE.RingGeometry(0.6, 0.8, 32),
+          new THREE.MeshBasicMaterial({ 
+            color: team === 'blue' ? 0x3b82f6 : 0xef4444,
+            transparent: true,
+            opacity: 0.4,
+            side: THREE.DoubleSide
+          })
+        );
+        this.selectionRing.rotation.x = -Math.PI / 2;
+        this.selectionRing.position.y = 0.01;
+        this.selectionRing.visible = false;
+        this.mesh.add(this.selectionRing);
+        
+        game.scene.add(this.mesh);
+      }
+      
+      update(dt) {
+        if (this.health <= 0) return;
+        
+        Object.keys(this.cooldowns).forEach(k => {
+          if (this.cooldowns[k] > 0) this.cooldowns[k] -= dt;
+        });
+        
+        if (this.shieldDuration > 0) {
+          this.shieldDuration -= dt;
+          if (this.shieldDuration <= 0) this.shield = 0;
+        }
+        
+        if (this.stunned > 0) {
+          this.stunned -= dt;
+          return;
+        }
+        
+        this.mana = Math.min(this.maxMana, this.mana + 15 * dt);
+        
+        if (this.type === 'hero') {
+          this.head.rotation.y += dt * 2;
+        }
+        
+        this.body.position.y = Math.sin(game.clock.elapsedTime * 3) * 0.05;
+      }
+      
+      moveToward(target, dt) {
+        if (!target || this.health <= 0) return;
+        const dir = new THREE.Vector3().subVectors(target, this.mesh.position);
+        const dist = dir.length();
+        if (dist > 0.1) {
+          dir.normalize();
+          this.mesh.position.add(dir.multiplyScalar(this.moveSpeed * dt));
+          this.mesh.lookAt(target.x, this.mesh.position.y, target.z);
+        }
+      }
+      
+      canAttack(target) {
+        if (!target || target.health <= 0 || this.health <= 0) return false;
+        const dist = this.mesh.position.distanceTo(target.mesh.position);
+        return dist <= this.attackRange && game.clock.elapsedTime - this.lastAttack >= 1 / this.attackSpeed;
+      }
+      
+      attack(target) {
+        if (!this.canAttack(target)) return;
+        this.lastAttack = game.clock.elapsedTime;
+        
+        const projectile = new Projectile(
+          this.mesh.position.clone().add(new THREE.Vector3(0, 0.5, 0)),
+          target,
+          this.attackDamage,
+          this.team
+        );
+        game.projectiles.push(projectile);
+      }
+      
+      takeDamage(amount, source) {
+        if (this.health <= 0) return 0;
+        
+        let actualDamage = amount;
+        if (this.shield > 0) {
+          const absorbed = Math.min(this.shield, actualDamage);
+          this.shield -= absorbed;
+          actualDamage -= absorbed;
+          this.createDamageNumber(absorbed, '#60a5fa');
+        }
+        
+        if (actualDamage > 0) {
+          this.health -= actualDamage;
+          this.lastDmgTaken = game.clock.elapsedTime;
+          this.createDamageNumber(actualDamage, this.team === 'blue' ? '#ef4444' : '#f87171');
+          
+          this.body.material.emissiveIntensity = 1;
+          setTimeout(() => { if (this.body) this.body.material.emissiveIntensity = 0.3; }, 100);
+        }
+        
+        if (this.health <= 0) {
+          this.die(source);
+        }
+        
+        return actualDamage;
+      }
+      
+      die(killer) {
+        this.health = 0;
+        this.mesh.visible = false;
+        
+        for (let i = 0; i < 20; i++) {
+          const p = new Particle(
+            this.mesh.position.clone(),
+            new THREE.Vector3((Math.random() - 0.5) * 10, Math.random() * 10, (Math.random() - 0.5) * 10),
+            this.team === 'blue' ? 0x3b82f6 : 0xef4444,
+            1.5
+          );
+          game.particles.push(p);
+        }
+        
+        if (killer && killer.team !== this.team) {
+          const gold = this.type === 'hero' ? 300 : 25;
+          const xp = this.type === 'hero' ? 200 : 40;
+          
+          if (killer.team === 'blue') {
+            game.stats.gold += gold;
+            if (this.type === 'hero') game.stats.kills++;
+            if (this.type === 'minion') game.stats.cs++;
+            game.player.gainXP(xp);
+          } else {
+            game.botStats.gold += gold;
+            if (this.type === 'hero') game.botStats.kills++;
+            if (this.type === 'minion') game.botStats.cs++;
+            game.bot.gainXP(xp);
+          }
+        }
+        
+        setTimeout(() => {
+          if (this.type === 'hero') {
+            this.respawn();
+          } else {
+            this.remove();
+          }
+        }, this.type === 'hero' ? 8000 : 100);
+      }
+      
+      respawn() {
+        this.health = this.maxHealth;
+        this.mana = this.maxMana;
+        this.mesh.position.set(
+          this.team === 'blue' ? -40 : 40,
+          0,
+          this.team === 'blue' ? 0 : 0
+        );
+        this.mesh.visible = true;
+      }
+      
+      remove() {
+        game.scene.remove(this.mesh);
+        const idx = game.minions.indexOf(this);
+        if (idx >= 0) game.minions.splice(idx, 1);
+      }
+      
+      gainXP(amount) {
+        this.xp += amount;
+        while (this.xp >= this.xpToNext) {
+          this.xp -= this.xpToNext;
+          this.levelUp();
+        }
+      }
+      
+      levelUp() {
+        this.level++;
+        this.xpToNext = Math.floor(280 * Math.pow(1.1, this.level - 1));
+        this.maxHealth += 100;
+        this.health = this.maxHealth;
+        this.maxMana += 50;
+        this.mana = this.maxMana;
+        this.attackDamage += 8;
+        
+        for (let i = 0; i < 30; i++) {
+          const p = new Particle(
+            this.mesh.position.clone().add(new THREE.Vector3(0, 1, 0)),
+            new THREE.Vector3((Math.random() - 0.5) * 5, Math.random() * 8, (Math.random() - 0.5) * 5),
+            0xfacc15,
+            2
+          );
+          game.particles.push(p);
+        }
+      }
+      
+      useSkill(skill, target) {
+        if (this.health <= 0 || this.stunned > 0) return false;
+        
+        const def = SKILLS[skill];
+        if (!def) return false;
+        if (this.cooldowns[skill] > 0) return false;
+        if (this.mana < def.mana) return false;
+        
+        this.mana -= def.mana;
+        this.cooldowns[skill] = def.cooldown;
+        
+        if (skill === 'Q') {
+          this.castPlasmaStrike(target);
+        } else if (skill === 'W') {
+          this.castForceShield();
+        } else if (skill === 'E') {
+          this.castPhaseDash(target);
+        } else if (skill === 'R') {
+          this.castOrbitalStrike(target);
+        }
+        
+        return true;
+      }
+      
+      castPlasmaStrike(target) {
+        const dir = new THREE.Vector3().subVectors(target, this.mesh.position).normalize();
+        const start = this.mesh.position.clone().add(new THREE.Vector3(0, 0.5, 0));
+        
+        const beamGeo = new THREE.CylinderGeometry(0.3, 0.3, 12, 16);
+        const beamMat = new THREE.MeshBasicMaterial({ 
+          color: 0x3b82f6,
+          transparent: true,
+          opacity: 0.8
+        });
+        const beam = new THREE.Mesh(beamGeo, beamMat);
+        beam.position.copy(start).add(dir.clone().multiplyScalar(6));
+        beam.lookAt(beam.position.clone().add(dir));
+        beam.rotateX(Math.PI / 2);
+        game.scene.add(beam);
+        
+        setTimeout(() => game.scene.remove(beam), 300);
+        
+        game.minions.concat([game.bot, game.player]).forEach(e => {
+          if (e.team !== this.team && e.health > 0) {
+            const toTarget = new THREE.Vector3().subVectors(e.mesh.position, start);
+            const proj = toTarget.dot(dir);
+            if (proj > 0 && proj < 12) {
+              const perp = toTarget.clone().sub(dir.clone().multiplyScalar(proj));
+              if (perp.length() < 1) {
+                e.takeDamage(SKILLS.Q.damage * (1 + this.level * 0.1), this);
+              }
+            }
+          }
+        });
+      }
+      
+      castForceShield() {
+        this.shield = 300 + this.level * 20;
+        this.shieldDuration = 3;
+        
+        const shieldGeo = new THREE.SphereGeometry(1.2, 32, 32);
+        const shieldMat = new THREE.MeshBasicMaterial({
+          color: 0x3b82f6,
+          transparent: true,
+          opacity: 0.3,
+          side: THREE.DoubleSide
+        });
+        const shieldMesh = new THREE.Mesh(shieldGeo, shieldMat);
+        this.mesh.add(shieldMesh);
+        
+        const startTime = game.clock.elapsedTime;
+        const update = () => {
+          if (game.clock.elapsedTime - startTime >= 3) {
+            this.mesh.remove(shieldMesh);
+            return;
+          }
+          shieldMesh.rotation.y += 0.05;
+          requestAnimationFrame(update);
+        };
+        update();
+      }
+      
+      castPhaseDash(target) {
+        const dir = new THREE.Vector3().subVectors(target, this.mesh.position).normalize();
+        const dashDist = 8;
+        const dashTarget = this.mesh.position.clone().add(dir.multiplyScalar(dashDist));
+        
+        for (let i = 0; i < 10; i++) {
+          const t = i / 10;
+          const pos = this.mesh.position.clone().lerp(dashTarget, t);
+          const ghost = this.mesh.clone();
+          ghost.position.copy(pos);
+          ghost.traverse(child => {
+            if (child.isMesh) {
+              child.material = child.material.clone();
+              child.material.transparent = true;
+              child.material.opacity = 0.3;
+            }
+          });
+          game.scene.add(ghost);
+          setTimeout(() => game.scene.remove(ghost), 200);
+        }
+        
+        this.mesh.position.copy(dashTarget);
+        
+        game.minions.concat([game.bot, game.player]).forEach(e => {
+          if (e.team !== this.team && e.health > 0) {
+            if (e.mesh.position.distanceTo(dashTarget) < 2) {
+              e.takeDamage(SKILLS.E.damage * (1 + this.level * 0.1), this);
+            }
+          }
+        });
+      }
+      
+      castOrbitalStrike(target) {
+        const impactPos = target.clone();
+        impactPos.y = 0;
+        
+        const ringGeo = new THREE.RingGeometry(0, 5, 32);
+        const ringMat = new THREE.MeshBasicMaterial({ 
+          color: 0xf97316,
+          transparent: true,
+          opacity: 0.5,
+          side: THREE.DoubleSide
+        });
+        const ring = new THREE.Mesh(ringGeo, ringMat);
+        ring.position.copy(impactPos);
+        ring.rotation.x = -Math.PI / 2;
+        game.scene.add(ring);
+        
+        setTimeout(() => {
+          for (let i = 0; i < 50; i++) {
+            const p = new Particle(
+              impactPos.clone().add(new THREE.Vector3(0, 0.1, 0)),
+              new THREE.Vector3((Math.random() - 0.5) * 8, Math.random() * 15, (Math.random() - 0.5) * 8),
+              0xf97316,
+              2
+            );
+            game.particles.push(p);
+          }
+          
+          game.minions.concat([game.bot, game.player]).forEach(e => {
+            if (e.team !== this.team && e.health > 0) {
+              const dist = e.mesh.position.distanceTo(impactPos);
+              if (dist < 5) {
+                e.takeDamage(SKILLS.R.damage * (1 + this.level * 0.15), this);
+                e.stunned = 1.5;
+              }
+            }
+          });
+          
+          game.scene.remove(ring);
+        }, 500);
+      }
+      
+      createDamageNumber(amount, color) {
+        const worldPos = this.mesh.position.clone().add(new THREE.Vector3(0, 2, 0));
+        const screenPos = worldPos.project(game.camera);
+        const x = (screenPos.x + 1) / 2 * window.innerWidth;
+        const y = (-screenPos.y + 1) / 2 * window.innerHeight;
+        
+        const div = document.createElement('div');
+        div.className = 'damage-number absolute';
+        div.style.left = x + 'px';
+        div.style.top = y + 'px';
+        div.style.color = color;
+        div.style.fontSize = '24px';
+        div.textContent = Math.floor(amount);
+        document.getElementById('damageNumbers').appendChild(div);
+        
+        setTimeout(() => div.remove(), 1000);
+      }
+    }
+    
+    class Projectile {
+      constructor(start, target, damage, team) {
+        this.position = start.clone();
+        this.target = target;
+        this.damage = damage;
+        this.team = team;
+        this.speed = 20;
+        this.alive = true;
+        
+        const geo = new THREE.SphereGeometry(0.15, 8, 8);
+        const mat = new THREE.MeshBasicMaterial({ 
+          color: team === 'blue' ? 0x3b82f6 : 0xef4444,
+          emissive: team === 'blue' ? 0x3b82f6 : 0xef4444
+        });
+        this.mesh = new THREE.Mesh(geo, mat);
+        this.mesh.position.copy(start);
+        game.scene.add(this.mesh);
+        
+        const light = new THREE.PointLight(team === 'blue' ? 0x3b82f6 : 0xef4444, 2, 3);
+        this.mesh.add(light);
+      }
+      
+      update(dt) {
+        if (!this.alive || !this.target || this.target.health <= 0) {
+          this.destroy();
+          return;
+        }
+        
+        const dir = new THREE.Vector3().subVectors(
+          this.target.mesh.position.clone().add(new THREE.Vector3(0, 0.5, 0)),
+          this.mesh.position
+        );
+        const dist = dir.length();
+        
+        if (dist < 0.5) {
+          this.target.takeDamage(this.damage, game.player.team === this.team ? game.player : game.bot);
+          this.destroy();
+          return;
+        }
+        
+        dir.normalize();
+        this.mesh.position.add(dir.multiplyScalar(this.speed * dt));
+      }
+      
+      destroy() {
+        this.alive = false;
+        game.scene.remove(this.mesh);
+        const idx = game.projectiles.indexOf(this);
+        if (idx >= 0) game.projectiles.splice(idx, 1);
+      }
+    }
+    
+    class Particle {
+      constructor(position, velocity, color, lifetime) {
+        this.position = position.clone();
+        this.velocity = velocity;
+        this.lifetime = lifetime;
+        this.maxLifetime = lifetime;
+        this.color = color;
+        
+        const geo = new THREE.SphereGeometry(0.1, 4, 4);
+        const mat = new THREE.MeshBasicMaterial({ 
+          color: color,
+          transparent: true,
+          opacity: 1
+        });
+        this.mesh = new THREE.Mesh(geo, mat);
+        this.mesh.position.copy(position);
+        game.scene.add(this.mesh);
+      }
+      
+      update(dt) {
+        this.lifetime -= dt;
+        if (this.lifetime <= 0) {
+          this.destroy();
+          return;
+        }
+        
+        this.velocity.y -= 9.8 * dt;
+        this.mesh.position.add(this.velocity.clone().multiplyScalar(dt));
+        this.mesh.material.opacity = this.lifetime / this.maxLifetime;
+        this.mesh.scale.multiplyScalar(0.98);
+      }
+      
+      destroy() {
+        game.scene.remove(this.mesh);
+        const idx = game.particles.indexOf(this);
+        if (idx >= 0) game.particles.splice(idx, 1);
+      }
+    }
+    
+    class Tower {
+      constructor(x, y, z, team) {
+        this.team = team;
+        this.maxHealth = 2500;
+        this.health = 2500;
+        this.attackDamage = 150;
+        this.attackRange = 8;
+        this.attackSpeed = 0.8;
+        this.lastAttack = 0;
+        
+        this.mesh = new THREE.Group();
+        this.mesh.position.set(x, y, z);
+        
+        const baseGeo = new THREE.CylinderGeometry(1.5, 2, 4, 6);
+        const baseMat = new THREE.MeshPhongMaterial({ 
+          color: team === 'blue' ? 0x1e40af : 0x991b1b,
+          emissive: team === 'blue' ? 0x3b82f6 : 0xef4444,
+          emissiveIntensity: 0.2
+        });
+        const base = new THREE.Mesh(baseGeo, baseMat);
+        base.castShadow = true;
+        base.position.y = 2;
+        this.mesh.add(base);
+        
+        const topGeo = new THREE.ConeGeometry(1, 1.5, 6);
+        const top = new THREE.Mesh(topGeo, baseMat);
+        top.position.y = 4.75;
+        top.castShadow = true;
+        this.mesh.add(top);
+        
+        game.scene.add(this.mesh);
+      }
+      
+      update(dt) {
+        if (this.health <= 0) return;
+        
+        const enemies = game.minions.concat([game.player, game.bot]).filter(e => 
+          e.team !== this.team && e.health > 0 && 
+          e.mesh.position.distanceTo(this.mesh.position) <= this.attackRange
+        );
+        
+        if (enemies.length > 0 && game.clock.elapsedTime - this.lastAttack >= 1 / this.attackSpeed) {
+          enemies.sort((a, b) => 
+            a.mesh.position.distanceTo(this.mesh.position) - b.mesh.position.distanceTo(this.mesh.position)
+          );
+          this.attack(enemies[0]);
+        }
+      }
+      
+      attack(target) {
+        this.lastAttack = game.clock.elapsedTime;
+        const projectile = new Projectile(
+          this.mesh.position.clone().add(new THREE.Vector3(0, 5, 0)),
+          target,
+          this.attackDamage,
+          this.team
+        );
+        game.projectiles.push(projectile);
+      }
+      
+      takeDamage(amount) {
+        this.health -= amount;
+        if (this.health < 0) this.health = 0;
+      }
+    }
+    
+    function init() {
+      game.scene = new THREE.Scene();
+      game.scene.fog = new THREE.Fog(0x0a0e1a, 30, 100);
+      
+      game.camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 1000);
+      game.camera.position.set(0, 15, 10);
+      game.camera.lookAt(0, 0, 0);
+      
+      game.renderer = new THREE.WebGLRenderer({ 
+        canvas: document.getElementById('gameCanvas'),
+        antialias: true,
+        alpha: true
+      });
+      game.renderer.setSize(window.innerWidth, window.innerHeight);
+      game.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+      game.renderer.shadowMap.enabled = true;
+      game.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+      
+      const ambient = new THREE.AmbientLight(0x404040, 0.5);
+      game.scene.add(ambient);
+      
+      const dirLight = new THREE.DirectionalLight(0xffffff, 1);
+      dirLight.position.set(20, 30, 10);
+      dirLight.castShadow = true;
+      dirLight.shadow.camera.left = -50;
+      dirLight.shadow.camera.right = 50;
+      dirLight.shadow.camera.top = 50;
+      dirLight.shadow.camera.bottom = -50;
+      dirLight.shadow.mapSize.width = 2048;
+      dirLight.shadow.mapSize.height = 2048;
+      game.scene.add(dirLight);
+      
+      const groundGeo = new THREE.PlaneGeometry(100, 100, 50, 50);
+      const groundMat = new THREE.MeshPhongMaterial({ 
+        color: 0x1e293b,
+        emissive: 0x0f172a,
+        emissiveIntensity: 0.3,
+        shininess: 10
+      });
+      
+      const vertices = groundGeo.attributes.position.array;
+      for (let i = 2; i < vertices.length; i += 3) {
+        vertices[i] = Math.sin(vertices[i-2] * 0.2) * Math.cos(vertices[i-1] * 0.2) * 0.5;
+      }
+      groundGeo.computeVertexNormals();
+      
+      game.terrain = new THREE.Mesh(groundGeo, groundMat);
+      game.terrain.rotation.x = -Math.PI / 2;
+      game.terrain.receiveShadow = true;
+      game.scene.add(game.terrain);
+      
+      const gridHelper = new THREE.GridHelper(100, 50, 0x334155, 0x1e293b);
+      game.scene.add(gridHelper);
+      
+      game.player = new Entity(-40, 0, 0, 'blue', 'hero');
+      game.player.selectionRing.visible = true;
+      game.bot = new Entity(40, 0, 0, 'red', 'hero');
+      
+      game.towers.push(new Tower(-30, 0, 0, 'blue'));
+      game.towers.push(new Tower(30, 0, 0, 'red'));
+      
+      spawnMinionWave();
+      setInterval(spawnMinionWave, 30000);
+      
+      setupEventListeners();
+      animate();
+    }
+    
+    function spawnMinionWave() {
+      for (let i = 0; i < 6; i++) {
+        const blueMinion = new Entity(-38 + i * 0.5, 0, 0, 'blue', 'minion');
+        blueMinion.maxHealth = 500;
+        blueMinion.health = 500;
+        blueMinion.attackDamage = 25;
+        blueMinion.moveSpeed = 3;
+        game.minions.push(blueMinion);
+        
+        const redMinion = new Entity(38 - i * 0.5, 0, i % 2 === 0 ? 2 : -2, 'red', 'minion');
+        redMinion.maxHealth = 500;
+        redMinion.health = 500;
+        redMinion.attackDamage = 25;
+        redMinion.moveSpeed = 3;
+        game.minions.push(redMinion);
+      }
+    }
+    
+    function setupEventListeners() {
+      const canvas = document.getElementById('gameCanvas');
+      
+      canvas.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        if (game.showCredits) return;
+        
+        const rect = canvas.getBoundingClientRect();
+        game.mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+        game.mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+        
+        game.raycaster.setFromCamera(game.mouse, game.camera);
+        const intersects = game.raycaster.intersectObject(game.terrain);
+        
+        if (intersects.length > 0) {
+          const point = intersects[0].point;
+          const target = findTargetAt(point);
+          
+          if (target && target.team !== 'blue' && target.health > 0) {
+            game.player.target = target;
+            game.player.state = 'attacking';
+          } else {
+            game.player.target = { mesh: { position: point } };
+            game.player.state = 'moving';
+            createPingEffect(point);
+          }
+        }
+      });
+      
+      window.addEventListener('keydown', (e) => {
+        game.keys[e.key.toLowerCase()] = true;
+        
+        if (e.key.toLowerCase() === 'c') {
+          toggleCredits();
+          e.preventDefault();
+        }
+        
+        if (game.showCredits) return;
+        
+        const skill = e.key.toUpperCase();
+        if (['Q', 'W', 'E', 'R'].includes(skill)) {
+          castPlayerSkill(skill);
+        }
+      });
+      
+      window.addEventListener('keyup', (e) => {
+        game.keys[e.key.toLowerCase()] = false;
+      });
+      
+      canvas.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        game.cameraZoom += e.deltaY * 0.001;
+        game.cameraZoom = Math.max(0.5, Math.min(2, game.cameraZoom));
+      });
+      
+      document.querySelectorAll('.skill-slot').forEach(slot => {
+        slot.addEventListener('click', () => {
+          const skill = slot.dataset.skill;
+          castPlayerSkill(skill);
+        });
+      });
+      
+      window.addEventListener('resize', () => {
+        game.camera.aspect = window.innerWidth / window.innerHeight;
+        game.camera.updateProjectionMatrix();
+        game.renderer.setSize(window.innerWidth, window.innerHeight);
+      });
+    }
+    
+    function toggleCredits() {
+      game.showCredits = !game.showCredits;
+      document.getElementById('creditsOverlay').classList.toggle('hidden', !game.showCredits);
+    }
+    
+    function findTargetAt(point) {
+      const entities = [game.bot, ...game.minions].filter(e => e.health > 0);
+      for (const entity of entities) {
+        if (entity.mesh.position.distanceTo(point) < 1.5) {
+          return entity;
+        }
+      }
+      return null;
+    }
+    
+    function castPlayerSkill(skill) {
+      const rect = document.getElementById('gameCanvas').getBoundingClientRect();
+      const canvas = document.getElementById('gameCanvas');
+      
+      const onMouseMove = (e) => {
+        game.mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+        game.mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+      };
+      
+      const onClick = (e) => {
+        if (e.button === 0) {
+          game.raycaster.setFromCamera(game.mouse, game.camera);
+          const intersects = game.raycaster.intersectObject(game.terrain);
+          if (intersects.length > 0) {
+            game.player.useSkill(skill, intersects[0].point);
+          }
+        }
+        canvas.removeEventListener('mousemove', onMouseMove);
+        canvas.removeEventListener('click', onClick);
+      };
+      
+      if (skill === 'W') {
+        game.player.useSkill(skill, null);
+      } else {
+        canvas.addEventListener('mousemove', onMouseMove);
+        canvas.addEventListener('click', onClick);
+      }
+    }
+    
+    function createPingEffect(position) {
+      const pingGeo = new THREE.RingGeometry(0.1, 0.5, 32);
+      const pingMat = new THREE.MeshBasicMaterial({ 
+        color: 0x3b82f6,
+        transparent: true,
+        opacity: 1,
+        side: THREE.DoubleSide
+      });
+      const ping = new THREE.Mesh(pingGeo, pingMat);
+      ping.position.copy(position);
+      ping.position.y = 0.1;
+      ping.rotation.x = -Math.PI / 2;
+      game.scene.add(ping);
+      
+      const startTime = game.clock.elapsedTime;
+      const animate = () => {
+        const elapsed = game.clock.elapsedTime - startTime;
+        if (elapsed > 0.6) {
+          game.scene.remove(ping);
+          return;
+        }
+        const scale = 1 + elapsed * 3;
+        ping.scale.set(scale, scale, scale);
+        ping.material.opacity = 1 - elapsed / 0.6;
+        requestAnimationFrame(animate);
+      };
+      animate();
+    }
+    
+    function updateBotAI(dt) {
+      if (game.bot.health <= 0 || game.bot.stunned > 0) return;
+      
+      const enemies = [game.player, ...game.minions.filter(m => m.team === 'blue' && m.health > 0)];
+      const nearest = enemies.reduce((closest, e) => {
+        const dist = e.mesh.position.distanceTo(game.bot.mesh.position);
+        return dist < closest.dist ? { entity: e, dist } : closest;
+      }, { entity: null, dist: Infinity });
+      
+      if (nearest.entity) {
+        const dirToNearest = new THREE.Vector3().subVectors(nearest.entity.mesh.position, game.bot.mesh.position);
+        const distToNearest = dirToNearest.length();
+        
+        // Skill usage logic - 329 APM simulation
+        if (game.bot.health / game.bot.maxHealth < 0.3 && game.bot.cooldowns.W === 0) {
+          game.bot.useSkill('W', null);
+        }
+        
+        if (distToNearest < 8 && game.bot.cooldowns.E === 0 && Math.random() < 0.3) {
+          game.bot.useSkill('E', nearest.entity.mesh.position);
+        }
+        
+        if (distToNearest < 10 && game.bot.cooldowns.Q === 0) {
+          game.bot.useSkill('Q', nearest.entity.mesh.position);
+        }
+        
+        if (distToNearest < 12 && game.bot.cooldowns.R === 0 && nearest.entity.health < 500) {
+          game.bot.useSkill('R', nearest.entity.mesh.position);
+        }
+        
+        // Movement and attack
+        if (distToNearest > game.bot.attackRange) {
+          game.bot.moveToward(nearest.entity.mesh.position, dt);
+        } else {
+          game.bot.attack(nearest.entity);
+          
+          // Kiting
+          if (game.bot.health / game.bot.maxHealth < 0.5) {
+            const kiteDir = dirToNearest.negate().normalize();
+            const kiteTarget = game.bot.mesh.position.clone().add(kiteDir.multiplyScalar(2));
+            game.bot.moveToward(kiteTarget, dt * 0.5);
+          }
+        }
+      } else {
+        game.bot.moveToward(new THREE.Vector3(-30, 0, 0), dt);
+      }
+    }
+    
+    function updateMinions(dt) {
+      game.minions.forEach(minion => {
+        if (minion.health <= 0) return;
+        
+        const enemies = [...game.minions, game.player, game.bot].filter(e => 
+          e.team !== minion.team && e.health > 0
+        );
+        
+        const target = enemies.reduce((closest, e) => {
+          const dist = e.mesh.position.distanceTo(minion.mesh.position);
+          return dist < closest.dist ? { entity: e, dist } : closest;
+        }, { entity: null, dist: Infinity });
+        
+        if (target.entity) {
+          if (target.dist > minion.attackRange) {
+            minion.moveToward(target.entity.mesh.position, dt);
+          } else {
+            minion.attack(target.entity);
+          }
+        }
+        
+        minion.update(dt);
+      });
+    }
+    
+    function updateCamera(dt) {
+      const targetPos = game.player.mesh.position.clone();
+      targetPos.add(new THREE.Vector3(0, 15 * game.cameraZoom, 10 * game.cameraZoom));
+      
+      game.camera.position.lerp(targetPos, dt * 5);
+      game.camera.lookAt(game.player.mesh.position);
+    }
+    
+    function updateUI() {
+      document.getElementById('playerHealthBar').style.width = (game.player.health / game.player.maxHealth * 100) + '%';
+      document.getElementById('playerHealthText').textContent = Math.ceil(game.player.health) + '/' + game.player.maxHealth;
+      document.getElementById('playerManaBar').style.width = (game.player.mana / game.player.maxMana * 100) + '%';
+      document.getElementById('playerManaText').textContent = Math.ceil(game.player.mana) + '/' + game.player.maxMana;
+      document.getElementById('playerXPBar').style.width = (game.player.xp / game.player.xpToNext * 100) + '%';
+      document.getElementById('playerLevel').textContent = game.player.level;
+      
+      document.getElementById('botHealthBar').style.width = (game.bot.health / game.bot.maxHealth * 100) + '%';
+      document.getElementById('botHealthText').textContent = Math.ceil(game.bot.health) + '/' + game.bot.maxHealth;
+      document.getElementById('botManaBar').style.width = (game.bot.mana / game.bot.maxMana * 100) + '%';
+      document.getElementById('botManaText').textContent = Math.ceil(game.bot.mana) + '/' + game.bot.maxMana;
+      document.getElementById('botLevel').textContent = game.bot.level;
+      
+      const time = Math.max(0, game.gameTime - game.clock.elapsedTime);
+      const mins = Math.floor(time / 60);
+      const secs = Math.floor(time % 60);
+      document.getElementById('matchTimer').textContent = `${mins}:${secs.toString().padStart(2, '0')}`;
+      
+      document.getElementById('statKills').textContent = game.stats.kills;
+      document.getElementById('statDeaths').textContent = game.stats.deaths;
+      document.getElementById('statAssists').textContent = game.stats.assists;
+      document.getElementById('statCS').textContent = game.stats.cs;
+      document.getElementById('statGold').textContent = game.stats.gold;
+      
+      Object.keys(SKILLS).forEach(skill => {
+        const cd = game.player.cooldowns[skill];
+        const slot = document.querySelector(`[data-skill="${skill}"]`);
+        const overlay = document.getElementById(`cooldown-${skill}`);
+        
+        if (cd > 0) {
+          slot.classList.add('on-cooldown');
+          overlay.classList.remove('hidden');
+          const percent = (1 - cd / SKILLS[skill].cooldown) * 100;
+          overlay.style.background = `conic-gradient(from 0deg, transparent ${percent}%, rgba(0, 0, 0, 0.85) ${percent}%)`;
+        } else {
+          slot.classList.remove('on-cooldown');
+          overlay.classList.add('hidden');
+        }
+      });
+      
+      updateMinimap();
+    }
+    
+    function updateMinimap() {
+      const canvas = document.getElementById('minimap');
+      const ctx = canvas.getContext('2d');
+      const size = 200;
+      const scale = size / 100;
+      
+      ctx.fillStyle = '#0f172a';
+      ctx.fillRect(0, 0, size, size);
+      
+      ctx.strokeStyle = '#334155';
+      ctx.lineWidth = 1;
+      for (let i = 0; i <= 10; i++) {
+        ctx.beginPath();
+        ctx.moveTo(i * 20, 0);
+        ctx.lineTo(i * 20, size);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(0, i * 20);
+        ctx.lineTo(size, i * 20);
+        ctx.stroke();
+      }
+      
+      ctx.fillStyle = '#1e40af';
+      ctx.fillRect(size/2 - 5, size/2 - 5, 10, 10);
+      ctx.fillStyle = '#991b1b';
+      ctx.fillRect(size - 15, size/2 - 5, 10, 10);
+      
+      game.towers.forEach(t => {
+        ctx.fillStyle = t.team === 'blue' ? '#3b82f6' : '#ef4444';
+        const x = (t.mesh.position.x + 50) * scale;
+        const y = (t.mesh.position.z + 50) * scale;
+        ctx.fillRect(x - 3, y - 3, 6, 6);
+      });
+      
+      game.minions.forEach(m => {
+        if (m.health <= 0) return;
+        ctx.fillStyle = m.team === 'blue' ? '#60a5fa' : '#f87171';
+        const x = (m.mesh.position.x + 50) * scale;
+        const y = (m.mesh.position.z + 50) * scale;
+        ctx.beginPath();
+        ctx.arc(x, y, 2, 0, Math.PI * 2);
+        ctx.fill();
+      });
+      
+      if (game.player.health > 0) {
+        ctx.fillStyle = '#3b82f6';
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 2;
+        const x = (game.player.mesh.position.x + 50) * scale;
+        const y = (game.player.mesh.position.z + 50) * scale;
+        ctx.beginPath();
+        ctx.arc(x, y, 4, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+      }
+      
+      if (game.bot.health > 0) {
+        ctx.fillStyle = '#ef4444';
+        ctx.strokeStyle = '#fff';
+        ctx.lineWidth = 2;
+        const x = (game.bot.mesh.position.x + 50) * scale;
+        const y = (game.bot.mesh.position.z + 50) * scale;
+        ctx.beginPath();
+        ctx.arc(x, y, 4, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+      }
+    }
+    
+    function animate() {
+      if (!game.running) return;
+      requestAnimationFrame(animate);
+      
+      const dt = Math.min(game.clock.getDelta(), 0.1);
+      
+      if (!game.showCredits) {
+        game.player.update(dt);
+        game.bot.update(dt);
+        
+        if (game.player.state === 'moving' && game.player.target) {
+          const dist = game.player.mesh.position.distanceTo(game.player.target.mesh.position);
+          if (dist > 0.5) {
+            game.player.moveToward(game.player.target.mesh.position, dt);
+          } else {
+            game.player.state = 'idle';
+            game.player.target = null;
+          }
+        } else if (game.player.state === 'attacking' && game.player.target) {
+          if (game.player.target.health <= 0) {
+            game.player.state = 'idle';
+            game.player.target = null;
+          } else {
+            const dist = game.player.mesh.position.distanceTo(game.player.target.mesh.position);
+            if (dist > game.player.attackRange) {
+              game.player.moveToward(game.player.target.mesh.position, dt);
+            } else {
+              game.player.attack(game.player.target);
+            }
+          }
+        }
+        
+        updateBotAI(dt);
+        updateMinions(dt);
+        game.towers.forEach(t => t.update(dt));
+        game.projectiles.forEach(p => p.update(dt));
+        game.particles.forEach(p => p.update(dt));
+      }
+      
+      updateCamera(dt);
+      updateUI();
+      
+      game.renderer.render(game.scene, game.camera);
+    }
+    
+    init();
+  </script>
 </body>
 </html>
